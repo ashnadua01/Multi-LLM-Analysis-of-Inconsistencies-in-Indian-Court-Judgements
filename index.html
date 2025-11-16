@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+
+<script src="https://d3js.org/d3.v6.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fuse.js/6.4.6/fuse.min.js"></script>
+
+<div id="my_dataviz" style="text-align: center">
+    <input type="text" id="searchInput" placeholder="Search for a node..."
+        style="margin-right: 5px; padding: 10px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc;">
+    <div style="display: flex; justify-content: center;">
+        <button onclick="searchNode()"
+            style="margin: 5px; padding: 10px 20px; font-size: 16px; background-color: #007bff; color: #fff; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.8s ease;">Search</button>
+        <button onclick="removeNode()"
+            style="margin: 5px; padding: 10px 20px; font-size: 16px; background-color: #007bff; color: #fff; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.8s ease;">Remove
+            Node</button>
+        <button onclick="resetVisualization()"
+            style="margin: 5px; padding: 10px 20px; font-size: 16px; background-color: #007bff; color: #fff; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.8s ease;">Reset</button>
+    </div>
+</div>
+
+<script>
+    const margin = { top: 0, right: 0, bottom: 0, left: 0 },
+        width = 900 - margin.left - margin.right,
+        height = 900 - margin.top - margin.bottom;
+
+    // append the svg object to the body of the page
+    const svg = d3.select("#my_dataviz")
+        .append("svg")
+        .attr("viewBox", [0, 0, width + 90, height + 80])
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${width / 2},${height / 2})`); // Center the graph
+
+    // Read dummy data
+    d3.json("data_nanavati.json").then(function (data) {
+        console.log(data)
+        // Sort nodes by group
+        data.nodes.sort((a, b) => a.grp - b.grp);
+
+        // List of node names
+        const allNodes = data.nodes.map(d => d.name)
+
+        // List of groups
+        let allGroups = data.nodes.map(d => d.grp)
+        allGroups = [...new Set(allGroups)]
+
+        // A color scale for groups:
+        const color = d3.scaleOrdinal()
+            .domain(allGroups)
+            .range(d3.schemeSet3);
+
+        // A linear scale for node size
+        const size = d3.scaleLinear()
+            .domain([1, 10])
+            .range([2, 8]); // Adjusted the range for smaller nodes
+
+        // A scale to position the nodes on the circle
+        const angleScale = d3.scalePoint()
+            .domain(allNodes)
+            .range([0, 2 * Math.PI]); // Full circle
+
+        // In my input data, links are provided between nodes -id-, NOT between node names.
+        // So I have to do a link between this id and the name
+        const idToNode = {};
+        data.nodes.forEach(function (n) {
+            idToNode[n.id] = n;
+        });
+
+        let originalLinkData = data.links.map(link => ({ ...link }));
+        console.log("original")
+        console.log(originalLinkData)
+
+        // Add the links
+        const links = svg
+            .selectAll('mylinks')
+            .data(data.links)
+            .join('path') // Use path elements for curved edges
+            .attr("d", d => {
+                const start = angleScale(idToNode[d.source].name);
+                const end = angleScale(idToNode[d.target].name);
+                const r = height / 2 - 150; // Radius
+                const x1 = Math.cos(start) * r;
+                const y1 = Math.sin(start) * r;
+                const x2 = Math.cos(end) * r;
+                const y2 = Math.sin(end) * r;
+                return `M${x1},${y1} Q0,0 ${x2},${y2}`; // Quadratic Bezier curve
+            })
+            .style("fill", "none")
+            .attr("stroke", "grey")
+            .style("stroke-width", 0.2)
+            .style("stroke-opacity", 1);
+
+        // Add the circle for the nodes
+        const nodes = svg
+            .selectAll("mynodes")
+            .data(data.nodes.sort((a, b) => { +b.n - +a.n }))
+            .join("circle")
+            .attr("cx", d => Math.cos(angleScale(d.name)) * (height / 2 - 120))
+            .attr("cy", d => Math.sin(angleScale(d.name)) * (height / 2 - 120))
+            .attr("r", d => {
+                return 5;
+            })
+            .style("fill", d => color(d.grp))
+            .attr("stroke", "white");
+
+        // And give them a label
+        const labels = svg
+            .selectAll("mylabels")
+            .data(data.nodes)
+            .join("text")
+            .attr("x", d => Math.cos(angleScale(d.name)) * (height / 2 - 90)) // Adjust distance from center
+            .attr("y", d => Math.sin(angleScale(d.name)) * (height / 2 - 90)) // Adjust distance from center
+            .text(d => d.name)
+            .style("text-anchor", d => {
+                const angle = angleScale(d.name);
+                return (angle < Math.PI) ? "start" : "start"; // Dynamically set text-anchor based on angle
+            })
+            .style("dominant-baseline", "middle")
+            .style("font-size", 6) // Adjust font size as needed
+            .attr("transform", d => {
+                const angle = angleScale(d.name) * 180 / Math.PI; // Convert to degrees
+                const x = Math.cos(angleScale(d.name)) * (height / 2 - 90);
+                const y = Math.sin(angleScale(d.name)) * (height / 2 - 90);
+                const rotation = (angle < Math.PI) ? angle : angle - Math.PI;
+                return `rotate(${rotation}, ${x}, ${y})`;
+            });
+
+        // Function to handle node click
+        function handleNodeClick(event, d) {
+            clickedNode = d;
+            // Get the IDs of connected nodes to the clicked node
+            const connectedNodesIds = data.links
+                .filter(link => link.source === d.id || link.target === d.id)
+                .map(link => link.source === d.id ? link.target : link.source);
+
+            // Highlight the nodes and connections
+            nodes.style('opacity', n => connectedNodesIds.includes(n.id) || n === d ? 1 : 0.8)
+                .style('fill', n => n === d ? 'red' : color(n.grp)) // Change color of selected node and cluster nodes
+                .attr('r', n => n === d ? 10 : 5); // Change size of selected node
+            links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0)
+                .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+            labels.style("opacity", b => connectedNodesIds.includes(b.id) || b === d ? 1 : 0)
+                .style("font-size", b => connectedNodesIds.includes(b.id) || b === d ? 14 : 6);
+
+            // Prevent further mouseover/mouseout events on nodes
+            nodes.on('mouseover', null);
+            nodes.on('mouseout', null);
+        }
+
+
+
+        // Variable to store the clicked node
+        // let clickedNode = null;
+
+        window.resetVisualization = function () {
+            // Restore visibility of all nodes
+            nodes.style('opacity', 1);
+
+            nodes.style('fill', d => color(d.grp))
+                .attr('r', 5); // Change size of selected node
+
+            // Reset links using original data (This is the crucial addition)
+            links.data(originalLinkData)
+                .style("fill", "none")
+                .attr("stroke", "grey")
+                .style("stroke-width", 0.2)
+                .style("stroke-opacity", 0.5);
+
+            // Restore opacity and style of all labels
+            labels.style('opacity', 1)
+                .style("font-size", 6);
+
+            // Reset clicked property for all nodes
+            nodes.each(function () {
+                this.clicked = false;
+            });
+
+            // Re-attach event listeners and restore their functionality as before
+            nodes.on('click', handleNodeClick)
+                .on('mouseover', function (event, d) {
+                    // Highlight the nodes: every node is green except for him
+                    nodes.style('opacity', n => {
+                        // Check if the node is connected to the highlighted edge or if it's the highlighted node itself
+                        return n === d || data.links.some(link => (link.source === d.id && link.target === n.id) || (link.target === d.id && link.source === n.id)) ? 1 : 0.8; // Adjusted opacity for non-highlighted nodes
+                    });
+
+                    // Highlight the connections
+                    links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                        .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0) // Adjusted opacity
+                        .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+
+                    // Adjust label visibility and size
+                    labels.style("opacity", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 1 : 0)
+                        .style("font-size", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 14 : 6)
+                })
+                .on('mouseout', function (event, d) {
+                    // Reset links using original data
+                    links.data(originalLinkData)
+                        .style("fill", "none")
+                        .attr("stroke", "grey")
+                        .style("stroke-width", 0.2)
+                        .style("stroke-opacity", 0.5);
+                    // Reset other styles as before
+                    nodes.style('opacity', 1);
+                    labels.style('opacity', 1)
+                        .style("font-size", 6)
+                })
+                .on('click', function (event, d) {
+                    // Prevent event from bubbling up to the svg
+                    event.stopPropagation();
+                    // If not already clicked, highlight the node and its connections
+                    if (!this.clicked) {
+                        handleNodeClick(event, d);
+                    }
+                    this.clicked = true;
+                });
+
+            // Function to handle SVG click
+            svg.on('click', function () {
+                nodes.each(function () {
+                    // Reset clicked property
+                    this.clicked = false;
+                });
+                // Restore visibility of all nodes, links, and labels
+                resetVisualization();
+            });
+        }
+
+        // Create a Fuse instance for fuzzy search
+        const fuse = new Fuse(data.nodes, {
+            keys: ['name'], // Specify the key to search in (in this case, the node name)
+            includeScore: true, // Include score for fuzzy search ranking
+            threshold: 0.4, // Set the threshold for fuzzy search (adjust as needed)
+        });
+
+        // Function to search for a node with fuzzy search
+        window.searchNode = function () {
+            const searchTerm = document.getElementById('searchInput').value.trim().toLowerCase();
+            if (searchTerm === '') return;
+
+            // Perform fuzzy search
+            const result = fuse.search(searchTerm);
+
+            // If there are any search results, select the first one
+            if (result.length > 0) {
+                handleNodeClick(null, result[0].item); // Simulate a click on the node
+            } else {
+                alert('Node not found.');
+            }
+        };
+
+
+        // // Function to search for a node
+        // window.searchNode = function () {
+        //     const input = document.getElementById('searchInput').value.toLowerCase();
+        //     const selectedNode = data.nodes.find(node => node.name.toLowerCase() === input);
+        //     if (selectedNode) {
+        //         handleNodeClick(null, selectedNode); // Simulate a click on the node
+        //     }
+        // };
+
+
+        // Function to remove a single node
+        window.removeNode = function () {
+            if (!clickedNode) {
+                alert("Please click on a node first.");
+                return;
+            }
+
+            const searchedNodeIndex = data.nodes.findIndex(node => node === clickedNode);
+            if (searchedNodeIndex !== -1) {
+                const searchedNodeId = data.nodes[searchedNodeIndex].id;
+                // Remove node from nodes array
+                data.nodes.splice(searchedNodeIndex, 1);
+                // Remove links related to the removed node
+                data.links = data.links.filter(link => link.source !== searchedNodeId && link.target !== searchedNodeId);
+                // Reset clickedNode
+                clickedNode = null;
+                // Update visualization
+                updateVisualization();
+            } else {
+                alert("Node not found.");
+            }
+        }
+
+        function updateVisualization() {
+            // Remove links
+            svg.selectAll('path').remove();
+            // Remove nodes
+            svg.selectAll('circle').remove();
+            // Remove labels
+            svg.selectAll('text').remove();
+
+            // originalLinkData = data.links.map(link => ({ ...link }));
+            // console.log("updated")
+            // console.log(originalLinkData)
+
+            // Re-draw links
+            const links = svg.selectAll('path')
+                .data(data.links)
+                .enter()
+                .append('path')
+                .attr("d", d => {
+                    const start = angleScale(idToNode[d.source].name);
+                    const end = angleScale(idToNode[d.target].name);
+                    const r = height / 2 - 150; // Radius
+                    const x1 = Math.cos(start) * r;
+                    const y1 = Math.sin(start) * r;
+                    const x2 = Math.cos(end) * r;
+                    const y2 = Math.sin(end) * r;
+                    return `M${x1},${y1} Q0,0 ${x2},${y2}`; // Quadratic Bezier curve
+                })
+                .style("fill", "none")
+                .attr("stroke", "grey")
+                .style("stroke-width", 0.2)
+                .style("stroke-opacity", 0.5);
+
+            // Re-draw nodes
+            const nodes = svg.selectAll('circle')
+                .data(data.nodes)
+                .enter()
+                .append('circle')
+                .attr("cx", d => Math.cos(angleScale(d.name)) * (height / 2 - 120))
+                .attr("cy", d => Math.sin(angleScale(d.name)) * (height / 2 - 120))
+                .attr("r", d => 5)
+                .style("fill", d => color(d.grp))
+                .attr("stroke", "white");
+
+            // Re-draw labels
+            const labels = svg.selectAll('text')
+                .data(data.nodes)
+                .enter()
+                .append('text')
+                .attr("x", d => Math.cos(angleScale(d.name)) * (height / 2 - 90))
+                .attr("y", d => Math.sin(angleScale(d.name)) * (height / 2 - 90))
+                .text(d => d.name)
+                .style("text-anchor", d => {
+                    const angle = angleScale(d.name);
+                    return (angle < Math.PI) ? "start" : "start"; // Dynamically set text-anchor based on angle
+                })
+                .style("dominant-baseline", "middle")
+                .style("font-size", 6) // Adjust font size as needed
+                .attr("transform", d => {
+                    const angle = angleScale(d.name) * 180 / Math.PI; // Convert to degrees
+                    const x = Math.cos(angleScale(d.name)) * (height / 2 - 90);
+                    const y = Math.sin(angleScale(d.name)) * (height / 2 - 90);
+                    const rotation = (angle < Math.PI) ? angle : angle - Math.PI;
+                    return `rotate(${rotation}, ${x}, ${y})`;
+                });
+
+            // Add click event listener to nodes
+            nodes.on('click', handleNodeClick);
+
+            // Re-attach event listeners
+            nodes.on('click', handleNodeClick)
+                .on('mouseover', handleNodeMouseover)
+                .on('mouseout', handleNodeMouseout);
+
+            // Function to handle node click
+            // Function to handle node click
+            function handleNodeClick(event, d) {
+                clickedNode = d;
+                // Get the IDs of connected nodes to the clicked node
+                const connectedNodesIds = data.links
+                    .filter(link => link.source === d.id || link.target === d.id)
+                    .map(link => link.source === d.id ? link.target : link.source);
+
+                // Highlight the nodes and connections
+                nodes.style('opacity', n => connectedNodesIds.includes(n.id) || n === d ? 1 : 0.8)
+                    .style('fill', n => n === d ? 'red' : color(d.grp)) // Change color of selected node
+                    .attr('r', n => n === d ? 10 : 5); // Change size of selected node
+                links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                    .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0)
+                    .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+                labels.style("opacity", b => connectedNodesIds.includes(b.id) ? 1 : 0)
+                    .style("font-size", b => connectedNodesIds.includes(b.id) ? 14 : 6);
+
+                // Prevent further mouseover/mouseout events on nodes
+                nodes.on('mouseover', null);
+                nodes.on('mouseout', null);
+            }
+
+            // Function to handle node mouseover
+            function handleNodeMouseover(event, d) {
+                // Get the IDs of connected nodes to the hovered node
+                const connectedNodesIds = data.links
+                    .filter(link => link.source === d.id || link.target === d.id)
+                    .map(link => link.source === d.id ? link.target : link.source);
+
+                // Highlight the nodes and connections
+                nodes.style('opacity', n => connectedNodesIds.includes(n.id) ? 1 : 0.8);
+                links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                    .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0)
+                    .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+                labels.style("opacity", b => connectedNodesIds.includes(b.id) ? 1 : 0)
+                    .style("font-size", b => connectedNodesIds.includes(b.id) ? 14 : 6);
+            }
+
+
+            // Function to handle node mouseout
+            function handleNodeMouseout(event, d) {
+                // Reset links using original data
+                links.style("fill", "none")
+                    .attr("stroke", "grey")
+                    .style("stroke-width", 0.2)
+                    .style("stroke-opacity", 0.5);
+                // Reset other styles as before
+                nodes.style('opacity', 1);
+                labels.style('opacity', 1)
+                    .style("font-size", 6);
+            }
+
+            originalLinkData = data.links.map(link => ({ ...link }));
+            window.resetVisualization = function () {
+                console.log("here")
+                // Restore visibility of all nodes
+                nodes.style('opacity', 1);
+
+                // Reset links using original data (This is the crucial addition)
+                links.data(originalLinkData)
+                    .style("fill", "none")
+                    .attr("stroke", "grey")
+                    .style("stroke-width", 0.2)
+                    .style("stroke-opacity", 0.5);
+
+                // Restore opacity and style of all labels
+                labels.style('opacity', 1)
+                    .style("font-size", 6);
+
+                // Reset clicked property for all nodes
+                nodes.each(function () {
+                    this.clicked = false;
+                });
+
+                // Re-attach event listeners and restore their functionality as before
+                nodes.on('click', handleNodeClick)
+                    .on('mouseover', function (event, d) {
+                        // Highlight the nodes: every node is green except for him
+                        // nodes.style('opacity', n => {
+                        //     // Check if the node is connected to the highlighted edge or if it's the highlighted node itself
+                        //     return n === d || data.links.some(link => (link.source === d.id && link.target === n.id) || (link.target === d.id && link.source === n.id)) ? 1 : 0.8; // Adjusted opacity for non-highlighted nodes
+                        // });
+
+                        nodes.style('opacity', n => connectedNodesIds.includes(n.id) || n === d ? 1 : 0.8)
+                            .style('fill', n => n === d ? 'red' : color(n.grp)) // Change color of selected node and cluster nodes
+                            .attr('r', n => n === d ? 10 : 5); // Change size of selected node
+
+                        // Highlight the connections
+                        links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                            .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0) // Adjusted opacity
+                            .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+
+                        // Adjust label visibility and size
+                        labels.style("opacity", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 1 : 0)
+                            .style("font-size", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 14 : 6)
+                    })
+                    .on('mouseout', function (event, d) {
+                        // Reset links using original data
+                        links.data(originalLinkData)
+                            .style("fill", "none")
+                            .attr("stroke", "grey")
+                            .style("stroke-width", 0.2)
+                            .style("stroke-opacity", 0.5);
+                        // Reset other styles as before
+                        nodes.style('opacity', 1);
+                        labels.style('opacity', 1)
+                            .style("font-size", 6)
+                    })
+                    .on('click', function (event, d) {
+                        // Prevent event from bubbling up to the svg
+                        event.stopPropagation();
+                        // If not already clicked, highlight the node and its connections
+                        if (!this.clicked) {
+                            handleNodeClick(event, d);
+                        }
+                        this.clicked = true;
+                    });
+
+                // Function to handle SVG click
+                svg.on('click', function () {
+                    nodes.each(function () {
+                        // Reset clicked property
+                        this.clicked = false;
+                    });
+                    // Restore visibility of all nodes, links, and labels
+                    resetVisualization();
+                });
+            }
+        }
+
+        // Add event listeners
+        nodes.on('click', handleNodeClick)
+            .on('mouseover', function (event, d) {
+                // Highlight the nodes: every node is green except for him
+                nodes.style('opacity', n => {
+                    // Check if the node is connected to the highlighted edge or if it's the highlighted node itself
+                    return n === d || data.links.some(link => (link.source === d.id && link.target === n.id) || (link.target === d.id && link.source === n.id)) ? 1 : 0.8; // Adjusted opacity for non-highlighted nodes
+                });
+
+                // Highlight the connections
+                links.style('stroke', a => a.source === d.id || a.target === d.id ? color(d.grp) : '#b8b8b8')
+                    .style('stroke-opacity', a => a.source === d.id || a.target === d.id ? 1 : 0) // Adjusted opacity
+                    .style('stroke-width', a => a.source === d.id || a.target === d.id ? 4 : 1);
+
+                // Adjust label visibility and size
+                labels.style("opacity", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 1 : 0)
+                    .style("font-size", b => b === d || data.links.some(link => (link.source === d.id && link.target === idToNode[b.id].id) || (link.target === d.id && link.source === idToNode[b.id].id)) ? 14 : 6)
+            })
+            .on('mouseout', function (event, d) {
+                // Reset links using original data
+                links.data(originalLinkData)
+                    .style("fill", "none")
+                    .attr("stroke", "grey")
+                    .style("stroke-width", 0.2)
+                    .style("stroke-opacity", 0.5);
+                // Reset other styles as before
+                nodes.style('opacity', 1);
+                labels.style('opacity', 1)
+                    .style("font-size", 6)
+            })
+            .on('click', function (event, d) {
+                // Prevent event from bubbling up to the svg
+                event.stopPropagation();
+                // If not already clicked, highlight the node and its connections
+                if (!this.clicked) {
+                    handleNodeClick(event, d);
+                }
+                this.clicked = true;
+            });
+        // Function to handle SVG click
+        svg.on('click', function () {
+            nodes.each(function () {
+                // Reset clicked property
+                this.clicked = false;
+            });
+            // Restore visibility of all nodes, links, and labels
+            resetVisualization();
+        });
+    });
+
+</script>
