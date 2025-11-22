@@ -14,7 +14,7 @@ The generated JSON file is then used by `index.html` to create the final visuali
   - **PDF file**
   - **Entities extracted using LLMs** (person, time, location, event, etc.)
 
-Notebook saare processing steps run karega and at the end:
+Notebook runs all the processing steps and at the end we get:
 
 **Output:**  
 data_X.json
